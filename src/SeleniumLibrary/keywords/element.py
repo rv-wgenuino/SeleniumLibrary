@@ -1,3 +1,6 @@
+import math
+import time
+
 # Copyright 2008-2011 Nokia Networks
 # Copyright 2011-2016 Ryan Tomac, Ed Manlove and contributors
 # Copyright 2016-     Robot Framework Foundation
@@ -873,6 +876,74 @@ return !element.dispatchEvent(evt);
         custom strategies.
         """
         self.element_finder.unregister(strategy_name)
+
+    @keyword
+    def set_range(self, locator, val):
+    # The adjustment helper to drag the slider thumb
+        def adjust(deltax):
+            if deltax < 0:
+                deltax = int(math.floor(min(-1, deltax)))
+            else:
+                deltax = int(math.ceil(max(1, deltax)))
+            ac = ActionChains(self.driver)
+            ac.click_and_hold(None)
+            ac.move_by_offset(deltax, 0)
+            ac.release(None)
+            ac.perform()
+
+        el = self.find_element(locator)
+        minval = float(el.get_attribute("min") or 0)
+        maxval = float(el.get_attribute("max") or 100)
+        v = max(0, min(1, (float(val) - minval) / (maxval - minval)))
+        width = el.size["width"]
+        target = float(width) * v
+
+        ac = ActionChains(self.driver)
+
+        # drag from min to max value, to ensure oninput event
+        ac.move_to_element_with_offset(el, 0, 1)
+        ac.click_and_hold()
+        ac.move_by_offset(width, 0)
+
+        # drag to the calculated position
+        ac.move_to_element_with_offset(el, target, 1)
+
+        ac.release()
+        ac.perform()
+
+        # perform a binary search and adjust the slider thumb until the value matches
+        minguess = 0
+        maxguess = 0
+        while True:
+            curval = el.get_attribute("value")
+            if float(curval) == float(val):
+                return True
+            prev_guess = target
+            if float(curval) < float(val):
+                minguess = target
+                target += (maxguess - target) / 2
+            else:
+                maxguess = target
+                target = minguess + (target - minguess) / 2
+            deltax = target-prev_guess
+            if abs(deltax) < 0.5:
+                break # cannot find a way, fallback to javascript.
+
+            time.sleep(0.1) # Don't consume CPU too much
+
+            adjust(deltax)
+
+        # Finally, if the binary search algoritm fails to achieve the final value
+        # we'll revert to the javascript method so at least the value will be changed
+        # even though the browser events wont' be triggered.
+
+        # Fallback
+        self.driver.execute_script("arguments[0].value=arguments[1];", el, val)
+        curval = el.get_attribute("value")
+        if float(curval) == float(val):
+            return True
+        else:
+            raise Exception("Can't set value %f for the element." % val)
 
     def _map_ascii_key_code_to_key(self, key_code):
         map = {
